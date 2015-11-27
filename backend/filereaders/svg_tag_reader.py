@@ -4,11 +4,15 @@ __author__ = 'Stefan Hechenberger <stefan@nortd.com>'
 import re
 import math
 import logging
+from PIL import Image
+from PIL import ImageEnhance
+import StringIO
+import base64
 
-from .utilities import matrixMult, parseFloats
+from utilities import matrixMult, parseFloats
 
-from .svg_attribute_reader import SVGAttributeReader
-from .svg_path_reader import SVGPathReader
+from svg_attribute_reader import SVGAttributeReader
+from svg_path_reader import SVGPathReader
 
 log = logging.getLogger("svg_reader")
 
@@ -22,6 +26,7 @@ class SVGTagReader:
         # init helper for path handling
         self._pathReader = SVGPathReader(svgreader)
 
+        self.px2mm = svgreader.px2mm
         self._handlers = {
             'g': self.g,
             'path': self.path,
@@ -65,7 +70,9 @@ class SVGTagReader:
             # accumulate transformations
             node['xformToWorld'] = matrixMult(node['xformToWorld'], node['xform'])
             # read tag
-            if (tagName != 'text'):
+            if (tagName == 'image'):
+                self._handlers[tagName](tag,node)
+            elif (tagName != 'text'):
                 self._handlers[tagName](node)
             else:
                 self.find_cut_settings_tags(tag, node)
@@ -130,9 +137,11 @@ class SVGTagReader:
                     rx = w/2.0
                 if ry > h/2.0:
                     rx = h/2.0
-                if rx < 0.0: rx *=-1
-                if ry < 0.0: ry *=-1
-                d = ['M', x+rx , y ,
+                if rx < 0.0:
+                    rx *= -1
+                if ry < 0.0:
+                    ry *= -1
+                d = ['M', x+rx, y,
                      'h', w-2*rx,
                      'c', rx, 0.0, rx, ry, rx, ry,
                      'v', h-2*ry,
@@ -144,7 +153,6 @@ class SVGTagReader:
                      'z']
                 self._pathReader.add_path(d, node)
 
-
     def line(self, node):
         # http://www.w3.org/TR/SVG11/shapes.html#LineElement
         # has transform and style attributes
@@ -155,7 +163,6 @@ class SVGTagReader:
             y2 = node.get('y2') or 0.0
             d = ['M', x1, y1, 'L', x2, y2]
             self._pathReader.add_path(d, node)
-
 
     def circle(self, node):
         # http://www.w3.org/TR/SVG11/shapes.html#CircleElement
@@ -173,7 +180,6 @@ class SVGTagReader:
                      'Z']
                 self._pathReader.add_path(d, node)
 
-
     def ellipse(self, node):
         # has transform and style attributes
         if self._has_valid_stroke(node):
@@ -190,12 +196,49 @@ class SVGTagReader:
                      'Z']
                 self._pathReader.add_path(d, node)
 
+    def image(self, data, node):
+        # data there: xlink:href
+        log.warn("Loading image")
+        if self._has_valid_stroke(node):
+            node_w = node.get('width') or 0.0
+            node_h = node.get('height') or 0.0
+            node_x = node.get('x') or 0.0
+            node_y = node.get('y') or 0.0
 
-    def image(self, node):
-        # not supported
-        # has transform and style attributes
-        log.warn("'image' tag is not supported, ignored")
+        for name, value in data.attrib.items():
+            attr = name.rpartition('}')[2].lower()
+            if attr == 'href':
+                # data:image/jpeg;base64,<base64payload>
+                header, content = value.split(';')
+                # mime = header.split(':')[1]
+                encoding, payload = content.split(',')
 
+        if payload:
+            img = Image.open(StringIO.StringIO(base64.b64decode(payload)))
+            log.warn("Opening image, size {}x{}".format(img.width, img.height))
+            # apparent size for the image
+            new_width = int(node_w / self.px2mm)
+            new_height = int(node_h / self.px2mm)
+            log.warn("Resizing to {}x{}".format(new_width, new_height))
+            img = img.resize((new_width, new_height), Image.ANTIALIAS)
+            img = img.convert("L")
+            img = img.convert('P', dither=None, palette=Image.ADAPTIVE, colors=2)
+
+            draw = False
+            for y in range(0, new_height):
+                for x in range(0, new_width):
+                    p = img.getpixel((x, y))
+                    # print p,
+                    if p == 1 and not draw:
+                        start_x = x
+                        start_y = y
+                        draw = True
+
+                    elif p == 0 and draw or x == new_width:
+                        self._pathReader.add_path(['M', start_x + node_x, start_y + node_y,
+                                                   'L', x + node_x, y + node_y], node)
+                        draw = False
+                # print ''
 
     def defs(self, node):
         # not supported

@@ -2,13 +2,15 @@
 __author__ = 'Stefan Hechenberger <stefan@nortd.com>'
 
 import re
+import sys
+import os
 import math
 import logging
 
-from .webcolors import hex_to_rgb, rgb_to_hex
-from .utilities import matrixMult, matrixApply
-from .utilities import vertexScale, parseFloats, parseScalar
-from .svg_tag_reader import SVGTagReader
+from webcolors import hex_to_rgb, rgb_to_hex
+from utilities import matrixMult, matrixApply
+from utilities import vertexScale, parseFloats, parseScalar
+from svg_tag_reader import SVGTagReader
 
 
 logging.basicConfig()
@@ -277,6 +279,8 @@ class SVGReader:
             'stroke-opacity': 1.0,
             'opacity': 1.0
         }
+
+        self._tagReader.px2mm = self.px2mm
         self.parse_children(svgRootElement, node)
 
         # build result dictionary
@@ -286,8 +290,6 @@ class SVGReader:
 
         return parse_results
 
-
-
     def parse_children(self, domNode, parentNode):
         for child in domNode:
             # log.debug("considering tag: " + child.tag)
@@ -296,7 +298,7 @@ class SVGReader:
                 # and inherit from parent
                 node = {
                     'paths': [],
-                    'xform': [1,0,0,1,0,0],
+                    'xform': [1, 0, 0, 1, 0, 0],
                     'xformToWorld': parentNode['xformToWorld'],
                     'display': parentNode.get('display'),
                     'visibility': parentNode.get('visibility'),
@@ -328,18 +330,20 @@ class SVGReader:
                             self.boundarys[hexcolor] = [path]
 
                 # 4. any lasertags (cut settings)?
-                if node.has_key('lasertags'):
+                if 'lasertags' in node:
                     self.lasertags.extend(node['lasertags'])
 
                 # recursive call
                 self.parse_children(child, node)
 
-
-
-
-
 if __name__ == "__main__":
-    with open(os.path.join(svgpath, "rocket_full.svg")) as f:
-        svgstring = f.read()
-    svgReader = SVGReader(0.08, [1220,610])
-    svgReader.parse(svg_string, forced_dpi)
+    svgpath = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../test_svgs')
+    forced_dpi = 90
+    if len(sys.argv) < 2:
+        filename = os.path.join(svgpath, "rocket_full.svg")
+    else:
+        filename = sys.argv[1]
+    with open(filename) as f:
+        svg_string = f.read()
+        svgReader = SVGReader(0.08, [1220, 610])
+        print svgReader.parse(svg_string)
